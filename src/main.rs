@@ -168,6 +168,21 @@ fn tf_index_of_folder(dir_path: &Path, tf_index: &mut TermFreqIndex) -> Result<(
     Ok(())
 }
 
+// TODO: Precache as much of tf-idf values as possible during indexing
+// TODO: Use sqlite3 to store the index
+
+fn tf(t: &str, d: &TermFreq) -> f32 {
+    let a = d.get(t).cloned().unwrap_or(0) as f32;
+    let b = d.iter().map(|(_, f)| *f).sum::<usize>() as f32;
+    a / b
+}
+
+fn idf(t: &str, d: &TermFreqIndex) -> f32 {
+    let n = d.len() as f32;
+    let m = d.values().filter(|tf| tf.contains_key(t)).count().max(1) as f32;
+    return (n / m).log10();
+}
+
 fn usage(program: &str) {
     eprintln!("Usage: {program} [SUBCOMMAND] [OPTIONS]");
     eprintln!("Subcommands:");
@@ -194,45 +209,45 @@ fn serve_404(request: Request) -> Result<(), ()> {
     })
 }
 
-fn tf(t: &str, d: &TermFreq) -> f32 {
-    let a = d.get(t).cloned().unwrap_or(0) as f32;
-    let b = d.iter().map(|(_, f)| *f).sum::<usize>() as f32;
-    a / b
+fn serve_api_search(tf_index: &TermFreqIndex, mut request: Request) -> Result<(), ()> {
+    let mut buf = Vec::new();
+    request.as_reader().read_to_end(&mut buf).map_err(|err| {
+        eprintln!("ERROR: could not read the body of the request: {err}");
+    })?;
+    let body = str::from_utf8(&buf).map_err(|err| {
+        eprintln!("ERROR: could not interpret body as UTF-8 string: {err}");
+    })?.chars().collect::<Vec<_>>();
+
+    let mut result = Vec::<(&Path, f32)>::new();
+    for (path, tf_table) in tf_index {
+        let mut rank = 0f32;
+        for token in Lexer::new(&body) {
+            rank += tf(&token, &tf_table) * idf(&token, &tf_index);
+        }
+        result.push((path, rank));
+    }
+    result.sort_by(|(_, rank1), (_, rank2)| rank1.partial_cmp(rank2).unwrap());
+    result.reverse();
+
+    let json = serde_json::to_string(&result.iter().take(20).collect::<Vec<_>>()).map_err(|err| {
+        eprintln!("ERROR: could not convert search results to JSON: {err}");
+    })?;
+
+    let content_type_header = Header::from_bytes("Content-Type", "application/json")
+        .expect("That we didn't put any garbage in the headers");
+    let response = Response::from_string(&json)
+        .with_header(content_type_header);
+    request.respond(response).map_err(|err| {
+        eprintln!("ERROR: could not serve a request {err}");
+    })
 }
 
-fn idf(t: &str, d: &TermFreqIndex) -> f32 {
-    let N = d.len() as f32;
-    let M = d.values().filter(|tf| tf.contains_key(t)).count().max(1) as f32;
-    return (N / M).log10();
-}
-
-fn serve_request(tf_index: &TermFreqIndex, mut request: Request) -> Result<(), ()> {
+fn serve_request(tf_index: &TermFreqIndex, request: Request) -> Result<(), ()> {
     println!("INFO: received request! method: {:?}, url: {:?}", request.method(), request.url());
 
     match (request.method(), request.url()) {
         (Method::Post, "/api/search") => {
-            let mut buf = Vec::new();
-            request.as_reader().read_to_end(&mut buf);
-            let body = str::from_utf8(&buf).map_err(|err| {
-                eprintln!("ERROR: could not interpret body as UTF-8 string: {err}");
-            })?.chars().collect::<Vec<_>>();
-
-            let mut result = Vec::<(&Path, f32)>::new();
-            for (path, tf_table) in tf_index {
-                let mut rank = 0f32;
-                for token in Lexer::new(&body) {
-                    rank += tf(&token, &tf_table) * idf(&token, &tf_index);
-                }
-                result.push((path, rank));
-            }
-            result.sort_by(|(_, rank1), (_, rank2)| rank1.partial_cmp(rank2).unwrap());
-            result.reverse();
-            for (path, rank) in result.iter().take(10) {
-                println!("{path} => {rank}", path = path.display());
-            }
-            request.respond(Response::from_string("ok")).map_err(|err| {
-                eprintln!("ERROR: {err}");
-            })
+            serve_api_search(tf_index, request)
         }
         (Method::Get, "/index.js") => {
             serve_static_file(request, "index.js", "text/javascript; charset=utf-8")
@@ -297,7 +312,8 @@ fn entry() -> Result<(), ()> {
             println!("INFO: listening at http://{address}/");
 
             for request in server.incoming_requests() {
-                serve_request(&tf_index, request);
+                // TODO: serve custom 500 in case of an error
+                serve_request(&tf_index, request).ok();
             }
         }
         _ => {
