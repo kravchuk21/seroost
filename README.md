@@ -1,1 +1,8 @@
-"Search Engine in Rust" by video from the channel [Tsoding Daily](https://www.youtube.com/@TsodingDaily)
+"Local Search Engine in Rust" by video from the channel [Tsoding Daily](https://www.youtube.com/@TsodingDaily)
+
+## Quick Start
+
+```console
+$ cargo run index ./folder/
+$ cargo run serve ./index.json
+```
