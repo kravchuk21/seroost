@@ -11,6 +11,7 @@ use std::io::{BufReader, BufWriter};
 mod model;
 use model::*;
 mod server;
+mod lexer;
 
 fn parse_entire_txt_file(file_path: &Path) -> Result<String, ()> {
     fs::read_to_string(file_path).map_err(|err| {
@@ -57,7 +58,6 @@ fn parse_entire_file_by_extension(file_path: &Path) -> Result<String, ()> {
     }
 }
 
-// TODO: Use sqlite3 to store the index
 fn save_model_as_json(model: &InMemoryModel, index_path: &str) -> Result<(), ()> {
     println!("Saving {index_path}...");
 
