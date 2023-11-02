@@ -3,6 +3,5 @@
 ## Quick Start
 
 ```console
-$ cargo run index ./folder/
-$ cargo run serve ./index.json
+$ cargo run serve ./folder/
 ```
